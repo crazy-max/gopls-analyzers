@@ -18,6 +18,33 @@ COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY . .
 
+FROM base AS update-sources
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+  go run ./hack/update
+
+FROM scratch AS update-modules
+COPY --from=update-sources /src/go.mod /src/go.sum /
+
+FROM scratch AS update-gopls
+COPY --from=update-sources /src/internal/gopls /
+
+FROM scratch AS update-xtools
+COPY --from=update-sources /src/internal/xtools /
+
+FROM update-sources AS update-validate
+RUN --mount=type=bind,target=/context <<'EOF'
+  set -eu
+  status=0
+  for path in go.mod go.sum internal/gopls internal/xtools; do
+    diff -ru "/context/$path" "/src/$path" || status=1
+  done
+  if [ "$status" -ne 0 ]; then
+    echo >&2 'ERROR: Generated sources differ. Run "docker buildx bake --allow=buildx.local.delete update".'
+    exit 1
+  fi
+EOF
+
 FROM base AS test
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
