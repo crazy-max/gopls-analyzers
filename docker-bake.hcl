@@ -21,7 +21,7 @@ group "default" {
 }
 
 group "validate" {
-  targets = ["lint"]
+  targets = ["lint", "update-validate"]
 }
 
 target "test" {
@@ -33,6 +33,34 @@ target "test" {
 target "lint" {
   inherits = ["_common"]
   target = "lint"
+  output = ["type=cacheonly"]
+}
+
+group "update" {
+  targets = ["update-modules", "update-gopls", "update-xtools"]
+}
+
+target "update-modules" {
+  inherits = ["_common"]
+  target = "update-modules"
+  output = ["."]
+}
+
+target "update-gopls" {
+  inherits = ["_common"]
+  target = "update-gopls"
+  output = ["type=local,dest=internal/gopls,mode=delete"]
+}
+
+target "update-xtools" {
+  inherits = ["_common"]
+  target = "update-xtools"
+  output = ["type=local,dest=internal/xtools,mode=delete"]
+}
+
+target "update-validate" {
+  inherits = ["_common"]
+  target = "update-validate"
   output = ["type=cacheonly"]
 }
 
