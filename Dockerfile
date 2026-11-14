@@ -21,7 +21,11 @@ COPY . .
 FROM base AS test
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-  go test -v -race ./...
+  go test -v -coverprofile=/tmp/coverage.txt -covermode=atomic -race ./... && \
+  go tool cover -func=/tmp/coverage.txt
+
+FROM scratch AS test-coverage
+COPY --from=test /tmp/coverage.txt /
 
 FROM base AS lint
 RUN --mount=type=cache,target=/go/pkg/mod \
@@ -39,6 +43,24 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 
 FROM scratch AS binary
 COPY --from=build /out/ /
+
+FROM --platform=$BUILDPLATFORM alpine:${ALPINE_VERSION} AS build-artifact
+ARG TARGETOS
+ARG TARGETARCH
+ARG TARGETVARIANT
+RUN --mount=type=bind,from=binary,target=/build <<'EOF'
+  set -eu
+  mkdir /out
+  filename="gopls-analyzers_${TARGETOS}_${TARGETARCH}${TARGETVARIANT}"
+  extension=""
+  if [ "$TARGETOS" = "windows" ]; then
+    extension=".exe"
+  fi
+  cp "/build/gopls-analyzers${extension}" "/out/${filename}${extension}"
+EOF
+
+FROM scratch AS artifact
+COPY --from=build-artifact /out/ /
 
 FROM scratch AS image
 COPY --from=build /out/gopls-analyzers /usr/local/bin/gopls-analyzers
