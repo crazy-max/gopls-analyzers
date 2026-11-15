@@ -11,11 +11,13 @@ import (
 	"github.com/crazy-max/gopls-analyzers/internal/gopls/analysis/simplifyslice"
 	"github.com/crazy-max/gopls-analyzers/internal/gopls/analysis/unusedparams"
 	"github.com/crazy-max/gopls-analyzers/internal/gopls/analysis/yield"
+	"golang.org/x/tools/go/analysis"
 	"golang.org/x/tools/go/analysis/multichecker"
+	"golang.org/x/tools/go/analysis/passes/modernize"
 )
 
 func main() {
-	multichecker.Main(
+	analyzers := []*analysis.Analyzer{
 		embeddirective.Analyzer,
 		fillreturns.Analyzer,
 		infertypeargs.Analyzer,
@@ -26,5 +28,6 @@ func main() {
 		simplifyslice.Analyzer,
 		unusedparams.Analyzer,
 		yield.Analyzer,
-	)
+	}
+	multichecker.Main(append(analyzers, modernize.Suite...)...)
 }

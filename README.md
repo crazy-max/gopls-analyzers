@@ -94,8 +94,27 @@ Other drivers can report false positives when a function is used as a value
 only in test files. Disable it with `-unusedparams=false` if that affects your
 project.
 
-Modernization is available separately through `go fix ./...` or golangci-lint's
-`modernize` linter. This executable does not bundle the modernize suite.
+### Modernize
+
+The executable also bundles the
+[modernize suite](https://pkg.go.dev/golang.org/x/tools/go/analysis/passes/modernize)
+from x/tools. Its checks run by default alongside the gopls analyzers.
+Select or disable individual checks using their names, such as `-any`,
+`-rangeint`, or `-any=false`. There is no combined `-modernize` flag.
+
+For example, check for `interface{}` declarations that can use `any`:
+
+```console
+$ go vet -vettool=/absolute/path/to/gopls-analyzers -any ./...
+```
+
+Apply that check's fixes directly:
+
+```console
+$ gopls-analyzers -any -fix ./...
+```
+
+Run `gopls-analyzers help` to list all bundled checks.
 
 ### Container image
 
