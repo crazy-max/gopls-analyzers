@@ -1,0 +1,83 @@
+# https://docs.github.com/en/communities/using-templates-to-encourage-useful-issues-and-pull-requests/syntax-for-githubs-form-schema
+name: Bug Report
+description: Report a bug
+labels:
+  - kind/bug
+  - status/triage
+
+body:
+  - type: checkboxes
+    attributes:
+      label: Support guidelines
+      description: Please read the support guidelines before proceeding.
+      options:
+        - label: I've read the [support guidelines](https://github.com/crazy-max/gopls-analyzers/blob/main/.github/SUPPORT.md)
+          required: true
+
+  - type: checkboxes
+    attributes:
+      label: I've found a bug and checked that ...
+      description: |
+        Make sure that your request fulfills all of the following requirements. If one requirement cannot be satisfied, explain in detail why.
+      options:
+        - label: ... the documentation does not mention anything about my problem
+        - label: ... there are no open or closed issues that are related to my problem
+
+  - type: textarea
+    attributes:
+      label: Description
+      description: |
+        Please provide a brief description of the bug in 1-2 sentences.
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Expected behaviour
+      description: |
+        Please describe precisely what you'd expect to happen.
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Actual behaviour
+      description: |
+        Please describe precisely what is actually happening.
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Steps to reproduce
+      description: |
+        Include the exact command, analyzer flags, and a minimal Go example.
+        Include the relevant go.mod directives and diagnostic output.
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+
+  - type: input
+    attributes:
+      label: gopls-analyzers version
+      description: Release tag or commit, and how you installed the tool.
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Go environment
+      description: |
+        Include the output of `go version` and `go env GOOS GOARCH GOTOOLCHAIN`.
+        If using a container, include the image tag or digest.
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Additional info
+      description: |
+        Please provide any additional information that seems useful.

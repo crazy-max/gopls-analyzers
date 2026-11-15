@@ -1,0 +1,27 @@
+version: 2
+updates:
+  - package-ecosystem: "gomod"
+    directory: "/"
+    # Updated with the copied sources by the gopls-update workflow.
+    ignore:
+      - dependency-name: "golang.org/x/tools"
+    schedule:
+      interval: "daily"
+    cooldown:
+      default-days: 2
+    labels:
+      - "kind/dependencies"
+      - "bot"
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    groups:
+      codeql-actions:
+        patterns:
+          - "github/codeql-action/*"
+    schedule:
+      interval: "daily"
+    cooldown:
+      default-days: 2
+    labels:
+      - "kind/dependencies"
+      - "bot"
