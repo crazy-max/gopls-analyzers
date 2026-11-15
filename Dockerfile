@@ -48,7 +48,9 @@ EOF
 FROM base AS test
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-  go test -v -coverprofile=/tmp/coverage.txt -covermode=atomic -race ./... && \
+  mkdir /tmp/coverage && \
+  GOCOVERDIR=/tmp/coverage go test -v -count=1 -race ./... && \
+  go tool covdata textfmt -i=/tmp/coverage -o=/tmp/coverage.txt && \
   go tool cover -func=/tmp/coverage.txt
 
 FROM scratch AS test-coverage

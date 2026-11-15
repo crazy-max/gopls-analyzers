@@ -1,5 +1,11 @@
 comment: false
 
+# Copied upstream support code is outside this project's coverage scope.
+ignore:
+  - "internal/xtools/**"
+  - "internal/gopls/fuzzy/**"
+  - "internal/gopls/util/**"
+
 coverage:
   status:
     patch: false
