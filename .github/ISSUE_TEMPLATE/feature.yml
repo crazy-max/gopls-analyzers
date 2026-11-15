@@ -1,0 +1,18 @@
+# https://docs.github.com/en/communities/using-templates-to-encourage-useful-issues-and-pull-requests/syntax-for-githubs-form-schema
+name: Feature request
+description: Missing functionality? Come tell us about it!
+labels:
+  - kind/enhancement
+  - status/triage
+
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: |
+        Describe the problem and the feature you want to see.
+        For analyzer requests, include example Go code and the expected diagnostic
+        or fix. Mention the upstream gopls or x/tools analyzer if one exists.
+    validations:
+      required: true
