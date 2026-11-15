@@ -1,0 +1,111 @@
+name: gopls-update
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 */12 * * *'
+  push:
+    branches:
+      - 'main'
+
+env:
+  DOCKER_BUILD_SUMMARY: false
+  GO_VERSION: 1.27
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      -
+        name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+      -
+        name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: true
+      -
+        name: Check latest gopls release
+        id: release
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const fs = require('node:fs');
+            const {stdout} = await exec.getExecOutput('go', [
+              'list', '-m', '-json', 'golang.org/x/tools/gopls@latest',
+            ]);
+            const latest = JSON.parse(stdout).Version;
+            const pin = 'hack/gopls.version';
+            const current = fs.readFileSync(pin, 'utf8').trim();
+
+            function version(value) {
+              const match = /^v(\d+)\.(\d+)\.(\d+)$/.exec(value);
+              if (!match) {
+                throw new Error(`Expected a stable gopls release, got ${value}`);
+              }
+              return match.slice(1).map(Number);
+            }
+
+            const latestVersion = version(latest);
+            const currentVersion = version(current);
+            let changed = false;
+            for (let i = 0; i < latestVersion.length; i++) {
+              if (latestVersion[i] !== currentVersion[i]) {
+                changed = latestVersion[i] > currentVersion[i];
+                break;
+              }
+            }
+            if (changed) {
+              fs.writeFileSync(pin, `${latest}\n`);
+            }
+            core.info(`Pinned: ${current}; latest stable: ${latest}; update: ${changed}`);
+            core.setOutput('version', latest);
+            core.setOutput('changed', changed);
+      -
+        name: Set up Docker Buildx
+        if: steps.release.outputs.changed == 'true'
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      -
+        name: Update gopls sources
+        if: steps.release.outputs.changed == 'true'
+        uses: docker/bake-action@d3418bd7d0e9324001bca92fa8ba175ea7e6dc9b # v7.3.0
+        with:
+          source: .
+          targets: update
+          allow: buildx.local.delete
+      -
+        name: Create PR
+        uses: peter-evans/create-pull-request@15733dbdfeedb4f7fdb73d13c6f5ac83b710fab8 # v8.1.2
+        with:
+          base: main
+          branch: bot/gopls-update
+          add-paths: |
+            hack/gopls.version
+            go.mod
+            go.sum
+            internal/gopls
+            internal/xtools
+          commit-message: "update gopls to ${{ steps.release.outputs.version }}."
+          signoff: true
+          sign-commits: true
+          delete-branch: true
+          title: "Update gopls to ${{ steps.release.outputs.version }}."
+          body: |
+            Update the copied analyzers and their internal dependencies to gopls ${{ steps.release.outputs.version }}, together with the matching module requirements.
+          labels: |
+            kind/dependencies
+            bot
+          draft: false
