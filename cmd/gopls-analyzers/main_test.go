@@ -8,6 +8,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"golang.org/x/tools/go/analysis/passes/modernize"
 )
 
 func TestCLI(t *testing.T) {
@@ -44,6 +46,11 @@ func TestCLI(t *testing.T) {
 				t.Errorf("missing analyzer flag %q", name)
 			}
 		}
+		for _, analyzer := range modernize.Suite {
+			if !names[analyzer.Name] {
+				t.Errorf("missing modernize analyzer flag %q", analyzer.Name)
+			}
+		}
 	})
 
 	t.Run("help", func(t *testing.T) {
@@ -72,6 +79,40 @@ func Slice(s []int) []int { return s[:len(s)] }
 		wantExit int
 		fixed    string
 	}{
+		{
+			name:    "modernize by default",
+			source:  "package fixture\nvar Value interface{}\n",
+			want:    []string{"interface{} can be replaced by any"},
+			wantErr: true,
+		},
+		{
+			name:    "select modernize analyzer",
+			flags:   []string{"-any"},
+			source:  source + "\nvar Other interface{}\n",
+			want:    []string{"interface{} can be replaced by any"},
+			absent:  []string{"unnecessary type arguments", "unneeded: len(s)"},
+			wantErr: true,
+		},
+		{
+			name:    "select gopls and modernize analyzers",
+			flags:   []string{"-infertypeargs", "-any"},
+			source:  source + "\nvar Other interface{}\n",
+			want:    []string{"unnecessary type arguments", "interface{} can be replaced by any"},
+			absent:  []string{"unneeded: len(s)"},
+			wantErr: true,
+		},
+		{
+			name:   "disable modernize analyzer",
+			flags:  []string{"-any=false"},
+			source: "package fixture\nvar Value interface{}\n",
+		},
+		{
+			name:   "modernize fix",
+			flags:  []string{"-any", "-fix"},
+			source: "package fixture\n\nvar Value interface{}\n",
+			direct: true,
+			fixed:  "package fixture\n\nvar Value any\n",
+		},
 		{
 			name:     "direct diagnostics",
 			flags:    []string{"-infertypeargs"},
