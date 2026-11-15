@@ -58,6 +58,28 @@ $ gopls-analyzers help
 $ gopls-analyzers help unusedparams
 ```
 
+### Exclude files
+
+Use `-exclude-generated` to suppress diagnostics and fixes in files with a
+standard `// Code generated ... DO NOT EDIT.` marker:
+
+```console
+$ go vet -vettool=/absolute/path/to/gopls-analyzers -exclude-generated ./...
+```
+
+Use `-exclude` with a regular expression to exclude other files. It matches
+absolute file paths with `/` separators on every platform:
+
+```console
+$ go vet -vettool=/absolute/path/to/gopls-analyzers -exclude='/(pb|third_party)/' ./...
+```
+
+Both flags are optional and can be combined. They also work when running the
+executable directly, including with `-fix`. Excluded files remain available
+for parsing and type checking; these flags suppress analyzer diagnostics,
+not compiler errors. Fixes that would edit an excluded file are suppressed
+in their entirety, even when reported in another file.
+
 ### Apply fixes
 
 The executable also accepts package patterns directly, including fixes:
