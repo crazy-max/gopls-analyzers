@@ -82,20 +82,38 @@ in their entirety, even when reported in another file.
 
 ### Verbose output
 
-Use `-verbose` to list the selected analyzers and log each analyzer's start,
-completion time, and errors to stderr, including the package name and the
-number of files analyzed:
+To print all bundled analyzer names once before running `go vet`, invoke
+`-list-analyzers` separately. It prints a sorted list to stdout and exits
+without loading or analyzing packages. This is the complete bundled list,
+regardless of analyzer selection flags:
+
+```console
+$ gopls-analyzers -list-analyzers
+$ go vet -vettool=/absolute/path/to/gopls-analyzers -verbose ./...
+```
+
+Use `-verbose` to log one progress line per package to stderr, including the
+package name and number of files, when its first bundled analyzer starts:
 
 ```console
 $ go vet -vettool=/absolute/path/to/gopls-analyzers -verbose ./...
 ```
 
-The sorted analyzer list respects positive and negative analyzer flags. It
-appears once per process, before the first analyzer starts. With `go vet`,
-each package is analyzed in a separate process.
+Use `-verbose-analyzers` for package progress plus each bundled analyzer's
+start, completion time, and errors. It only logs analyzers that actually run,
+including the subset needed to produce facts for dependency packages:
 
-This also works when running the executable directly. Only analyzers that
-actually run produce logs. Analyzers run concurrently, so log order can vary.
+```console
+$ go vet -vettool=/absolute/path/to/gopls-analyzers -verbose-analyzers ./...
+```
+
+Both flags also work when running the executable directly. Test variants may
+share a package path but have separate progress lines. Analyzers run
+concurrently, so log order can vary. Progress lines indicate that analysis
+has started, not that the package has passed all checks.
+`go vet` buffers output until each package's tool process exits, so these
+lines are not a live heartbeat during that package's analysis.
+
 Go may reuse cached vet results; add `-a` to `go vet` to force a fresh run.
 Timings cover analyzer execution, including diagnostic filtering, and exclude
 package loading, parsing, type checking, and prerequisite analysis.
@@ -110,7 +128,7 @@ $ gopls-analyzers -infertypeargs -fix ./...
 ```
 
 Review fixes before committing them. Diagnostics cause a nonzero exit status;
-successful checks are silent unless `-verbose` is enabled.
+successful checks are silent unless a verbosity flag is enabled.
 
 ### Bundled analyzers
 

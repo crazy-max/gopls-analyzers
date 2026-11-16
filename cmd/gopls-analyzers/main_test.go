@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"go/ast"
@@ -11,11 +12,13 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
 	"golang.org/x/tools/go/analysis"
 	"golang.org/x/tools/go/analysis/passes/modernize"
+	"golang.org/x/tools/go/analysis/unitchecker"
 )
 
 func TestExclusionsFilterFixes(t *testing.T) {
@@ -95,8 +98,36 @@ func TestCLI(t *testing.T) {
 		}
 	})
 
+	t.Run("list analyzers", func(t *testing.T) {
+		cmd := exec.CommandContext(t.Context(), binary, "-list-analyzers")
+		// Listing does not require a Go module or project to analyze.
+		cmd.Dir = t.TempDir()
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		stdout, err := cmd.Output()
+		if err != nil || stderr.Len() != 0 {
+			t.Fatalf("list analyzers: %v\nstdout: %s\nstderr: %s", err, stdout, &stderr)
+		}
+		names := []string{
+			"embed", "fillreturns", "infertypeargs", "maprange", "nonewvars",
+			"noresultvalues", "simplifycompositelit", "simplifyslice", "unusedparams", "yield",
+		}
+		for _, analyzer := range modernize.Suite {
+			names = append(names, analyzer.Name)
+		}
+		slices.Sort(names)
+		var want strings.Builder
+		fmt.Fprintf(&want, "gopls-analyzers: bundled analyzers (%d):\n", len(names))
+		for _, name := range names {
+			fmt.Fprintf(&want, "  - %s\n", name)
+		}
+		if string(stdout) != want.String() {
+			t.Errorf("analyzer list = %q, want %q", stdout, want.String())
+		}
+	})
+
 	t.Run("flags", func(t *testing.T) {
-		output, err := exec.CommandContext(t.Context(), binary, "-flags").CombinedOutput()
+		output, err := exec.CommandContext(t.Context(), binary, "-verbose-analyzers", "-flags").CombinedOutput()
 		if err != nil {
 			t.Fatalf("list flags: %v\n%s", err, output)
 		}
@@ -128,8 +159,11 @@ func TestCLI(t *testing.T) {
 		if !names["exclude-generated"] {
 			t.Error("missing boolean exclude-generated flag")
 		}
-		if !names["verbose"] {
-			t.Error("missing boolean verbose flag")
+		if !names["verbose"] || !names["verbose-analyzers"] {
+			t.Error("missing boolean verbosity flags")
+		}
+		if !names["list-analyzers"] {
+			t.Error("missing boolean list-analyzers flag")
 		}
 		if isBool, ok := names["exclude"]; !ok || isBool {
 			t.Error("missing string exclude flag")
@@ -143,6 +177,60 @@ func TestCLI(t *testing.T) {
 		}
 	})
 
+	t.Run("verbose dependency facts", func(t *testing.T) {
+		dir := t.TempDir()
+		source := filepath.Join(dir, "fixture.go")
+		if err := os.WriteFile(source, []byte("package fixture\nvar Value int\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		config := unitchecker.Config{
+			ID:         "example.com/dependency",
+			ImportPath: "example.com/dependency",
+			GoVersion:  "go1.27.0",
+			GoFiles:    []string{source},
+			VetxOnly:   true,
+			VetxOutput: filepath.Join(dir, "vet.out"),
+		}
+		data, err := json.Marshal(config)
+		if err != nil {
+			t.Fatal(err)
+		}
+		configPath := filepath.Join(dir, "vet.cfg")
+		if err := os.WriteFile(configPath, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		for _, verboseFlag := range []string{"-verbose", "-verbose-analyzers"} {
+			t.Run(verboseFlag, func(t *testing.T) {
+				cmd := exec.CommandContext(t.Context(), binary, verboseFlag, configPath)
+				var stderr bytes.Buffer
+				cmd.Stderr = &stderr
+				stdout, err := cmd.Output()
+				if err != nil || len(stdout) != 0 {
+					t.Fatalf("dependency analysis: %v\nstdout: %s\nstderr: %s", err, stdout, &stderr)
+				}
+				output := stderr.String()
+				progress := "gopls-analyzers: example.com/dependency: analyzing (files: 1)\n"
+				if strings.Count(output, progress) != 1 || !strings.HasPrefix(output, progress) {
+					t.Fatalf("expected one progress line before analyzer logs:\n%s", output)
+				}
+				if verboseFlag == "-verbose" {
+					if output != progress {
+						t.Errorf("unexpected compact output:\n%s", output)
+					}
+				} else {
+					for _, name := range []string{"newexpr", "yield"} {
+						if !strings.Contains(output, name+": completed in ") {
+							t.Errorf("missing fact-producing analyzer %s:\n%s", name, output)
+						}
+					}
+					if strings.Contains(output, "any: starting") || strings.Contains(output, "selected analyzers") {
+						t.Errorf("reported analyzers that did not run:\n%s", output)
+					}
+				}
+			})
+		}
+	})
+
 	const source = `package fixture
 
 func Identity[T any](v T) T { return v }
@@ -152,34 +240,35 @@ var Value = Identity[int](1)
 func Slice(s []int) []int { return s[:len(s)] }
 `
 	for _, tc := range []struct {
-		name     string
-		flags    []string
-		source   string
-		want     []string
-		absent   []string
-		wantErr  bool
-		direct   bool
-		wantExit int
-		fixed    string
-		files    map[string]string
+		name       string
+		flags      []string
+		source     string
+		want       []string
+		absent     []string
+		wantErr    bool
+		direct     bool
+		wantExit   int
+		fixed      string
+		files      map[string]string
+		counts     map[string]int
+		jsonOutput bool
 	}{
 		{
 			name:   "verbose vet",
 			flags:  []string{"-verbose", "-any"},
 			source: "package fixture\nvar Value any\n",
 			want: []string{
-				"gopls-analyzers: selected analyzers (1):\n  - any\n",
-				"gopls-analyzers: example.com/fixture: any: starting (files: 1)",
-				"gopls-analyzers: example.com/fixture: any: completed in ",
+				"gopls-analyzers: example.com/fixture: analyzing (files: 1)",
 			},
-			absent: []string{"infertypeargs: starting"},
+			absent: []string{"selected analyzers", ": starting", ": completed in"},
+			counts: map[string]int{"gopls-analyzers: example.com/fixture: analyzing": 1},
 		},
 		{
 			name:   "verbose diagnostics",
 			flags:  []string{"-verbose", "-any"},
 			source: "package fixture\nvar Value interface{}\n",
 			want: []string{
-				"gopls-analyzers: example.com/fixture: any: completed in ",
+				"gopls-analyzers: example.com/fixture: analyzing (files: 1)",
 				"interface{} can be replaced by any",
 			},
 			wantErr: true,
@@ -189,40 +278,97 @@ func Slice(s []int) []int { return s[:len(s)] }
 			flags:  []string{"-verbose", "-any"},
 			source: "package fixture\nvar Value any\n",
 			want: []string{
-				"gopls-analyzers: selected analyzers (1):\n  - any\n",
+				"gopls-analyzers: example.com/fixture: analyzing (files: 1)",
+			},
+			direct: true,
+			counts: map[string]int{"gopls-analyzers: example.com/fixture: analyzing": 1},
+		},
+		{
+			name:   "verbose analyzer selection",
+			flags:  []string{"-verbose-analyzers", "-infertypeargs", "-any", "-yield=false"},
+			source: "package fixture\nvar Value any\n",
+			want: []string{
+				"gopls-analyzers: example.com/fixture: analyzing (files: 1)",
 				"gopls-analyzers: example.com/fixture: any: starting (files: 1)",
+				"gopls-analyzers: example.com/fixture: any: completed in ",
+				"gopls-analyzers: example.com/fixture: infertypeargs: completed in ",
+			},
+			absent: []string{"yield: starting", "selected analyzers"},
+			counts: map[string]int{"gopls-analyzers: example.com/fixture: analyzing": 1},
+		},
+		{
+			name:   "verbose analyzers direct",
+			flags:  []string{"-verbose-analyzers", "-any"},
+			source: "package fixture\nvar Value any\n",
+			want: []string{
+				"gopls-analyzers: example.com/fixture: analyzing (files: 1)",
 				"gopls-analyzers: example.com/fixture: any: completed in ",
 			},
 			direct: true,
 		},
 		{
-			name:   "verbose selected analyzers",
-			flags:  []string{"-verbose", "-infertypeargs", "-any", "-yield=false"},
-			source: "package fixture\nvar Value any\n",
-			want:   []string{"gopls-analyzers: selected analyzers (2):\n  - any\n  - infertypeargs\n"},
+			name:   "verbose analyzers JSON",
+			flags:  []string{"-verbose-analyzers", "-any", "-json"},
+			source: "package fixture\nvar Value interface{}\n",
+			want: []string{
+				"interface{} can be replaced by any",
+				"gopls-analyzers: example.com/fixture: any: completed in ",
+			},
+			direct:     true,
+			jsonOutput: true,
+		},
+		{
+			name:   "verbose analyzers fix",
+			flags:  []string{"-verbose-analyzers", "-any", "-fix"},
+			source: "package fixture\n\nvar Value interface{}\n",
+			want:   []string{"gopls-analyzers: example.com/fixture: any: completed in "},
+			direct: true,
+			fixed:  "package fixture\n\nvar Value any\n",
 		},
 		{
 			name:   "verbose negative analyzer selection",
-			flags:  []string{"-verbose", "-any=false"},
+			flags:  []string{"-verbose-analyzers", "-any=false"},
 			source: "package fixture\nvar Value any\n",
-			want:   []string{fmt.Sprintf("gopls-analyzers: selected analyzers (%d):\n  - atomictypes\n", 9+len(modernize.Suite))},
-			absent: []string{"any: starting", "  - any\n"},
+			want:   []string{"gopls-analyzers: example.com/fixture: atomictypes: completed in "},
+			absent: []string{"any: starting", "selected analyzers"},
 		},
 		{
 			name:   "verbose default analyzers",
 			flags:  []string{"-verbose", "-exclude-generated"},
 			source: "package fixture\nvar Value any\n",
 			want: []string{
-				fmt.Sprintf("gopls-analyzers: selected analyzers (%d):\n  - any\n  - atomictypes\n", 10+len(modernize.Suite)),
-				"gopls-analyzers: example.com/fixture: any: completed in ",
-				"gopls-analyzers: example.com/fixture: infertypeargs: completed in ",
+				"gopls-analyzers: example.com/fixture: analyzing (files: 1)",
 			},
+			absent: []string{"selected analyzers", ": starting", ": completed in"},
+			counts: map[string]int{"gopls-analyzers: example.com/fixture: analyzing": 1},
+		},
+		{
+			name:   "verbose direct package variants",
+			flags:  []string{"-verbose", "-any"},
+			source: "package fixture\nvar Value any\n",
+			files: map[string]string{
+				"extra_test.go": "package fixture\nvar TestValue = 1\n",
+			},
+			want: []string{
+				"gopls-analyzers: example.com/fixture: analyzing (files: 1)",
+				"gopls-analyzers: example.com/fixture: analyzing (files: 2)",
+			},
+			direct: true,
+			counts: map[string]int{"gopls-analyzers: example.com/fixture: analyzing": 2},
 		},
 		{
 			name:   "verbose disabled",
 			flags:  []string{"-verbose=false"},
 			source: "package fixture\nvar Value any\n",
 			absent: []string{"gopls-analyzers:"},
+		},
+		{
+			name:    "list analyzers disabled",
+			flags:   []string{"-list-analyzers=false", "-any"},
+			source:  "package fixture\nvar Value interface{}\n",
+			want:    []string{"interface{} can be replaced by any"},
+			absent:  []string{"bundled analyzers"},
+			wantErr: true,
 		},
 		{
 			name:   "quiet by default",
@@ -566,7 +712,13 @@ func blank(_ int) int { return 1 }
 			}
 			cmd.Dir = dir
 			cmd.Env = append(os.Environ(), "GOWORK=off", "GOPROXY=off")
-			output, err := cmd.CombinedOutput()
+			var stderr bytes.Buffer
+			cmd.Stderr = &stderr
+			stdout, err := cmd.Output()
+			output := append(stdout, stderr.Bytes()...)
+			if tc.jsonOutput && !json.Valid(stdout) {
+				t.Errorf("invalid JSON on stdout: %s", stdout)
+			}
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("error = %v, want error = %v\n%s", err, tc.wantErr, output)
 			}
@@ -592,6 +744,11 @@ func blank(_ int) int { return 1 }
 			for _, absent := range tc.absent {
 				if strings.Contains(string(output), absent) {
 					t.Errorf("unexpected %q in output:\n%s", absent, output)
+				}
+			}
+			for message, want := range tc.counts {
+				if got := strings.Count(string(output), message); got != want {
+					t.Errorf("%q appeared %d times, want %d\n%s", message, got, want, output)
 				}
 			}
 		})
