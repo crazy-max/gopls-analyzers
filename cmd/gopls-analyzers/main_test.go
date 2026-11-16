@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -120,6 +121,9 @@ func TestCLI(t *testing.T) {
 		if !names["exclude-generated"] {
 			t.Error("missing boolean exclude-generated flag")
 		}
+		if !names["verbose"] {
+			t.Error("missing boolean verbose flag")
+		}
 		if isBool, ok := names["exclude"]; !ok || isBool {
 			t.Error("missing string exclude flag")
 		}
@@ -152,6 +156,72 @@ func Slice(s []int) []int { return s[:len(s)] }
 		fixed    string
 		files    map[string]string
 	}{
+		{
+			name:   "verbose vet",
+			flags:  []string{"-verbose", "-any"},
+			source: "package fixture\nvar Value any\n",
+			want: []string{
+				"gopls-analyzers: selected analyzers (1):\n  - any\n",
+				"gopls-analyzers: example.com/fixture: any: starting (files: 1)",
+				"gopls-analyzers: example.com/fixture: any: completed in ",
+			},
+			absent: []string{"infertypeargs: starting"},
+		},
+		{
+			name:   "verbose diagnostics",
+			flags:  []string{"-verbose", "-any"},
+			source: "package fixture\nvar Value interface{}\n",
+			want: []string{
+				"gopls-analyzers: example.com/fixture: any: completed in ",
+				"interface{} can be replaced by any",
+			},
+			wantErr: true,
+		},
+		{
+			name:   "verbose direct",
+			flags:  []string{"-verbose", "-any"},
+			source: "package fixture\nvar Value any\n",
+			want: []string{
+				"gopls-analyzers: selected analyzers (1):\n  - any\n",
+				"gopls-analyzers: example.com/fixture: any: starting (files: 1)",
+				"gopls-analyzers: example.com/fixture: any: completed in ",
+			},
+			direct: true,
+		},
+		{
+			name:   "verbose selected analyzers",
+			flags:  []string{"-verbose", "-infertypeargs", "-any", "-yield=false"},
+			source: "package fixture\nvar Value any\n",
+			want:   []string{"gopls-analyzers: selected analyzers (2):\n  - any\n  - infertypeargs\n"},
+		},
+		{
+			name:   "verbose negative analyzer selection",
+			flags:  []string{"-verbose", "-any=false"},
+			source: "package fixture\nvar Value any\n",
+			want:   []string{fmt.Sprintf("gopls-analyzers: selected analyzers (%d):\n  - atomictypes\n", 9+len(modernize.Suite))},
+			absent: []string{"any: starting", "  - any\n"},
+		},
+		{
+			name:   "verbose default analyzers",
+			flags:  []string{"-verbose", "-exclude-generated"},
+			source: "package fixture\nvar Value any\n",
+			want: []string{
+				fmt.Sprintf("gopls-analyzers: selected analyzers (%d):\n  - any\n  - atomictypes\n", 10+len(modernize.Suite)),
+				"gopls-analyzers: example.com/fixture: any: completed in ",
+				"gopls-analyzers: example.com/fixture: infertypeargs: completed in ",
+			},
+		},
+		{
+			name:   "verbose disabled",
+			flags:  []string{"-verbose=false"},
+			source: "package fixture\nvar Value any\n",
+			absent: []string{"gopls-analyzers:"},
+		},
+		{
+			name:   "quiet by default",
+			source: "package fixture\nvar Value any\n",
+			absent: []string{"gopls-analyzers:"},
+		},
 		{
 			name:    "generated diagnostics by default",
 			flags:   []string{"-any"},

@@ -2,11 +2,15 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"go/ast"
 	"go/token"
+	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
+	"sync"
+	"time"
 
 	"github.com/crazy-max/gopls-analyzers/internal/gopls/analysis/embeddirective"
 	"github.com/crazy-max/gopls-analyzers/internal/gopls/analysis/fillreturns"
@@ -24,6 +28,7 @@ import (
 )
 
 func main() {
+	verbose := flag.Bool("verbose", false, "log selected analyzers, execution, and elapsed time to stderr")
 	var exclude exclusions
 	flag.BoolVar(&exclude.generated, "exclude-generated", false, "exclude diagnostics and fixes in generated files")
 	flag.Func("exclude", "exclude diagnostics and fixes in files whose absolute slash-separated path matches this regular expression", func(value string) error {
@@ -49,10 +54,44 @@ func main() {
 	}
 	analyzers = append(analyzers, modernize.Suite...)
 
+	var logAnalyzers sync.Once
 	for _, analyzer := range analyzers {
 		run := analyzer.Run
 		analyzer.Run = func(pass *analysis.Pass) (any, error) {
-			return run(exclude.filter(pass))
+			if !*verbose {
+				return run(exclude.filter(pass))
+			}
+			logAnalyzers.Do(func() {
+				// Match the driver's selection: positive flags select a subset;
+				// otherwise, only explicitly disabled analyzers are omitted.
+				enabled := make(map[string]bool)
+				flag.Visit(func(f *flag.Flag) {
+					enabled[f.Name] = f.Value.String() == "true"
+				})
+				hasEnabled := slices.ContainsFunc(analyzers, func(a *analysis.Analyzer) bool {
+					return enabled[a.Name]
+				})
+				var names []string
+				for _, a := range analyzers {
+					if on, set := enabled[a.Name]; on || (!hasEnabled && !set) {
+						names = append(names, a.Name)
+					}
+				}
+				slices.Sort(names)
+				fmt.Fprintf(os.Stderr, "gopls-analyzers: selected analyzers (%d):\n", len(names))
+				for _, name := range names {
+					fmt.Fprintf(os.Stderr, "  - %s\n", name)
+				}
+			})
+			fmt.Fprintf(os.Stderr, "gopls-analyzers: %s: %s: starting (files: %d)\n", pass.Pkg.Path(), pass.Analyzer.Name, len(pass.Files))
+			start := time.Now()
+			result, err := run(exclude.filter(pass))
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "gopls-analyzers: %s: %s: failed after %s: %v\n", pass.Pkg.Path(), pass.Analyzer.Name, time.Since(start), err)
+			} else {
+				fmt.Fprintf(os.Stderr, "gopls-analyzers: %s: %s: completed in %s\n", pass.Pkg.Path(), pass.Analyzer.Name, time.Since(start))
+			}
+			return result, err
 		}
 	}
 

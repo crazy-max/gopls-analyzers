@@ -80,6 +80,26 @@ for parsing and type checking; these flags suppress analyzer diagnostics,
 not compiler errors. Fixes that would edit an excluded file are suppressed
 in their entirety, even when reported in another file.
 
+### Verbose output
+
+Use `-verbose` to list the selected analyzers and log each analyzer's start,
+completion time, and errors to stderr, including the package name and the
+number of files analyzed:
+
+```console
+$ go vet -vettool=/absolute/path/to/gopls-analyzers -verbose ./...
+```
+
+The sorted analyzer list respects positive and negative analyzer flags. It
+appears once per process, before the first analyzer starts. With `go vet`,
+each package is analyzed in a separate process.
+
+This also works when running the executable directly. Only analyzers that
+actually run produce logs. Analyzers run concurrently, so log order can vary.
+Go may reuse cached vet results; add `-a` to `go vet` to force a fresh run.
+Timings cover analyzer execution, including diagnostic filtering, and exclude
+package loading, parsing, type checking, and prerequisite analysis.
+
 ### Apply fixes
 
 The executable also accepts package patterns directly, including fixes:
@@ -90,7 +110,7 @@ $ gopls-analyzers -infertypeargs -fix ./...
 ```
 
 Review fixes before committing them. Diagnostics cause a nonzero exit status;
-successful checks are silent.
+successful checks are silent unless `-verbose` is enabled.
 
 ### Bundled analyzers
 
