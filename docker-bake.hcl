@@ -22,7 +22,7 @@ group "default" {
 }
 
 group "validate" {
-  targets = ["lint", "update-validate"]
+  targets = ["lint", "mod-validate", "update-validate"]
 }
 
 target "test" {
@@ -34,6 +34,18 @@ target "test" {
 target "lint" {
   inherits = ["_common"]
   target = "lint"
+  output = ["type=cacheonly"]
+}
+
+target "mod-update" {
+  inherits = ["_common"]
+  target = "mod-update"
+  output = ["."]
+}
+
+target "mod-validate" {
+  inherits = ["_common"]
+  target = "mod-validate"
   output = ["type=cacheonly"]
 }
 

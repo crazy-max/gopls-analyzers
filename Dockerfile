@@ -14,9 +14,6 @@ ENV GOTOOLCHAIN=local
 COPY --from=xx / /
 RUN apk add --no-cache file gcc git linux-headers musl-dev
 WORKDIR /src
-COPY go.mod go.sum ./
-RUN --mount=type=cache,target=/go/pkg/mod go mod download
-COPY . .
 
 FROM base AS version
 ARG GIT_FETCH_HISTORY=0
@@ -33,26 +30,61 @@ RUN --mount=target=.,rw <<'EOF'
   echo "$version" | tee /tmp/.version
 EOF
 
-FROM base AS update-sources
+FROM base AS build-base
+COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
+  go mod download
+
+FROM build-base AS mod-tidy
+RUN --mount=type=bind,target=.,rw \
+    --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+  go mod tidy && \
+  mkdir /out && cp go.mod go.sum /out/
+
+FROM scratch AS mod-update
+COPY --from=mod-tidy /out/ /
+
+FROM mod-tidy AS mod-validate
+RUN --mount=type=bind,target=/context <<'EOF'
+  set -eu
+  status=0
+  for path in go.mod go.sum; do
+    diff -u "/context/$path" "/out/$path" || status=1
+  done
+  if [ "$status" -ne 0 ]; then
+    echo >&2 'ERROR: Module files differ. Run "docker buildx bake mod-update".'
+    exit 1
+  fi
+EOF
+
+FROM build-base AS update-sources
+RUN --mount=type=bind,target=.,rw \
+    --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build <<EOT
+  set -eu
   go run ./hack/update
+  mkdir -p /out/internal
+  cp go.mod go.sum /out/
+  cp -r internal/gopls internal/xtools /out/internal/
+EOT
 
 FROM scratch AS update-modules
-COPY --from=update-sources /src/go.mod /src/go.sum /
+COPY --from=update-sources /out/go.mod /out/go.sum /
 
 FROM scratch AS update-gopls
-COPY --from=update-sources /src/internal/gopls /
+COPY --from=update-sources /out/internal/gopls /
 
 FROM scratch AS update-xtools
-COPY --from=update-sources /src/internal/xtools /
+COPY --from=update-sources /out/internal/xtools /
 
 FROM update-sources AS update-validate
 RUN --mount=type=bind,target=/context <<'EOF'
   set -eu
   status=0
   for path in go.mod go.sum internal/gopls internal/xtools; do
-    diff -ru "/context/$path" "/src/$path" || status=1
+    diff -ru "/context/$path" "/out/$path" || status=1
   done
   if [ "$status" -ne 0 ]; then
     echo >&2 'ERROR: Generated sources differ. Run "docker buildx bake --allow=buildx.local.delete update".'
@@ -60,8 +92,9 @@ RUN --mount=type=bind,target=/context <<'EOF'
   fi
 EOF
 
-FROM base AS test
-RUN --mount=type=cache,target=/go/pkg/mod \
+FROM build-base AS test
+RUN --mount=type=bind,target=. \
+    --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
   mkdir /tmp/coverage && \
   GOCOVERDIR=/tmp/coverage go test -v -count=1 -race ./... && \
@@ -71,16 +104,18 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 FROM scratch AS test-coverage
 COPY --from=test /tmp/coverage.txt /
 
-FROM base AS lint
-RUN --mount=type=cache,target=/go/pkg/mod \
+FROM build-base AS lint
+RUN --mount=type=bind,target=. \
+    --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache \
     --mount=from=golangci-lint,source=/usr/bin/golangci-lint,target=/usr/bin/golangci-lint \
   golangci-lint run ./cmd/... ./hack/...
 
-FROM base AS build
+FROM build-base AS build
 ARG TARGETPLATFORM
 ENV CGO_ENABLED=0
-RUN --mount=type=bind,from=version,source=/tmp/.version,target=/tmp/.version \
+RUN --mount=type=bind,target=. \
+    --mount=type=bind,from=version,source=/tmp/.version,target=/tmp/.version \
     --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
   xx-go build -trimpath -ldflags "-s -w -X main.version=$(cat /tmp/.version)" -o /out/ ./cmd/gopls-analyzers && \
