@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
+	"go/types"
 	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"sync"
 	"time"
 
@@ -35,7 +37,10 @@ func main() {
 		os.Exit(0)
 		return nil
 	})
-	verbose := flag.Bool("verbose", false, "log selected analyzers, execution, and elapsed time to stderr")
+
+	verbose := flag.Bool("verbose", false, "log package analysis progress to stderr")
+	verboseAnalyzers := flag.Bool("verbose-analyzers", false, "log package progress and individual analyzer execution times to stderr")
+
 	var exclude exclusions
 	flag.BoolVar(&exclude.generated, "exclude-generated", false, "exclude diagnostics and fixes in generated files")
 	flag.Func("exclude", "exclude diagnostics and fixes in files whose absolute slash-separated path matches this regular expression", func(value string) error {
@@ -61,35 +66,45 @@ func main() {
 	}
 	analyzers = append(analyzers, modernize.Suite...)
 
-	var logAnalyzers sync.Once
+	flag.BoolFunc("list-analyzers", "list all bundled analyzers and exit", func(value string) error {
+		list, err := strconv.ParseBool(value)
+		if err != nil {
+			return err
+		}
+		if !list {
+			return nil
+		}
+		names := make([]string, 0, len(analyzers))
+		for _, analyzer := range analyzers {
+			names = append(names, analyzer.Name)
+		}
+		slices.Sort(names)
+		fmt.Printf("gopls-analyzers: bundled analyzers (%d):\n", len(names))
+		for _, name := range names {
+			fmt.Printf("  - %s\n", name)
+		}
+		os.Exit(0)
+		return nil
+	})
+
+	var logMu sync.Mutex
+	loggedPackages := make(map[*types.Package]bool)
 	for _, analyzer := range analyzers {
 		run := analyzer.Run
 		analyzer.Run = func(pass *analysis.Pass) (any, error) {
-			if !*verbose {
+			if !*verbose && !*verboseAnalyzers {
 				return run(exclude.filter(pass))
 			}
-			logAnalyzers.Do(func() {
-				// Match the driver's selection: positive flags select a subset;
-				// otherwise, only explicitly disabled analyzers are omitted.
-				enabled := make(map[string]bool)
-				flag.Visit(func(f *flag.Flag) {
-					enabled[f.Name] = f.Value.String() == "true"
-				})
-				hasEnabled := slices.ContainsFunc(analyzers, func(a *analysis.Analyzer) bool {
-					return enabled[a.Name]
-				})
-				var names []string
-				for _, a := range analyzers {
-					if on, set := enabled[a.Name]; on || (!hasEnabled && !set) {
-						names = append(names, a.Name)
-					}
-				}
-				slices.Sort(names)
-				fmt.Fprintf(os.Stderr, "gopls-analyzers: selected analyzers (%d):\n", len(names))
-				for _, name := range names {
-					fmt.Fprintf(os.Stderr, "  - %s\n", name)
-				}
-			})
+			// Key by package identity so direct mode also logs test variants.
+			logMu.Lock()
+			if !loggedPackages[pass.Pkg] {
+				fmt.Fprintf(os.Stderr, "gopls-analyzers: %s: analyzing (files: %d)\n", pass.Pkg.Path(), len(pass.Files))
+				loggedPackages[pass.Pkg] = true
+			}
+			logMu.Unlock()
+			if !*verboseAnalyzers {
+				return run(exclude.filter(pass))
+			}
 			fmt.Fprintf(os.Stderr, "gopls-analyzers: %s: %s: starting (files: %d)\n", pass.Pkg.Path(), pass.Analyzer.Name, len(pass.Files))
 			start := time.Now()
 			result, err := run(exclude.filter(pass))
