@@ -78,7 +78,7 @@ func TestCLI(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		binary += ".exe"
 	}
-	args := []string{"build", "-o", binary}
+	args := []string{"build", "-ldflags=-X main.version=v1.2.3-test", "-o", binary}
 	if os.Getenv("GOCOVERDIR") != "" {
 		// Collect coverage from the CLI subprocesses, including go vet's vettool.
 		args = append(args, "-cover", "-covermode=atomic", "-race",
@@ -87,6 +87,13 @@ func TestCLI(t *testing.T) {
 	if output, err := exec.CommandContext(t.Context(), "go", append(args, ".")...).CombinedOutput(); err != nil {
 		t.Fatalf("build runner: %v\n%s", err, output)
 	}
+
+	t.Run("version", func(t *testing.T) {
+		output, err := exec.CommandContext(t.Context(), binary, "--version").CombinedOutput()
+		if err != nil || string(output) != "v1.2.3-test\n" {
+			t.Fatalf("version: %v\n%s", err, output)
+		}
+	})
 
 	t.Run("flags", func(t *testing.T) {
 		output, err := exec.CommandContext(t.Context(), binary, "-flags").CombinedOutput()

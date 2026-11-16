@@ -27,7 +27,14 @@ import (
 	"golang.org/x/tools/go/analysis/passes/modernize"
 )
 
+var version = "dev"
+
 func main() {
+	flag.BoolFunc("version", "print version and exit", func(string) error {
+		fmt.Println(version)
+		os.Exit(0)
+		return nil
+	})
 	verbose := flag.Bool("verbose", false, "log selected analyzers, execution, and elapsed time to stderr")
 	var exclude exclusions
 	flag.BoolVar(&exclude.generated, "exclude-generated", false, "exclude diagnostics and fixes in generated files")
