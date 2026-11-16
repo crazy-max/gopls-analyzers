@@ -12,11 +12,26 @@ FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-alpine${ALPINE_VERSION} AS b
 ENV GOFLAGS="-buildvcs=false"
 ENV GOTOOLCHAIN=local
 COPY --from=xx / /
-RUN apk add --no-cache file gcc linux-headers musl-dev
+RUN apk add --no-cache file gcc git linux-headers musl-dev
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY . .
+
+FROM base AS version
+ARG GIT_FETCH_HISTORY=0
+RUN --mount=target=.,rw <<'EOF'
+  set -eu
+  if [ "$GIT_FETCH_HISTORY" = 1 ]; then
+    if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
+      git fetch --unshallow --tags origin
+    else
+      git fetch --tags origin
+    fi
+  fi
+  version=$(git describe --match 'v[0-9]*' --dirty='.m' --always --tags)
+  echo "$version" | tee /tmp/.version
+EOF
 
 FROM base AS update-sources
 RUN --mount=type=cache,target=/go/pkg/mod \
@@ -65,12 +80,14 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 FROM base AS build
 ARG TARGETPLATFORM
 ENV CGO_ENABLED=0
-RUN --mount=type=cache,target=/go/pkg/mod \
+RUN --mount=type=bind,from=version,source=/tmp/.version,target=/tmp/.version \
+    --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-  xx-go build -trimpath -o /out/ ./cmd/gopls-analyzers && \
+  xx-go build -trimpath -ldflags "-s -w -X main.version=$(cat /tmp/.version)" -o /out/ ./cmd/gopls-analyzers && \
   xx-verify /out/*
 
 FROM scratch AS binary
+ARG BUILDKIT_SBOM_SCAN_STAGE=true
 COPY --from=build /out/ /
 
 FROM --platform=$BUILDPLATFORM alpine:${ALPINE_VERSION} AS build-artifact
